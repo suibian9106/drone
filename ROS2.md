@@ -7,26 +7,13 @@ ROS2和ROS1架构
 
 **DDS（Data Distribution Service）**，即**数据分发服务**，是一个由**对象管理组织（OMG）** 发布的**开放式国际标准**。它是一种专为**高性能、实时、分布式**系统设计的**以数据为中心**的通信中间件协议和API标准。
 
-你=可以把它想象成一个**全球性的、分布式的“数据总线”**。应用程序不需要知道其他应用程序在哪里（IP地址、端口等），它们只需要**关心自己需要什么数据（订阅）或产生什么数据（发布）**。DDS负责高效、可靠、及时地将数据从生产者传递到所有需要它的消费者。
+可以把它想象成一个**全球性的、分布式的“数据总线”**。应用程序不需要知道其他应用程序在哪里（IP地址、端口等），它们只需要**关心自己需要什么数据（订阅）或产生什么数据（发布）**。DDS负责高效、可靠、及时地将数据从生产者传递到所有需要它的消费者。
 
 ROS1命令行
 <img src="images/ROS1命令行.png">
 
 ROS2命令行
 <img src="images/ROS2命令行.png">
-
-### 核心差异一览表
-
-| 特性 | ROS 1 | ROS 2 |
-| :--- | :--- | :--- |
-| **中间件** | **自定义的 TCPROS/UDPROS** | **标准的 DDS (Data Distribution Service)** |
-| **通信方式** | 依赖主节点（ROS Master）进行发现 | **去中心化的自动发现**（基于DDS） |
-| **实时性能** | 很差，不适合实时控制 | **优秀**，支持硬实时系统 |
-| **网络支持** | 对NAT和无线网络支持不佳 | **原生支持** 多机器人、NAT、无线网络 |
-| **平台支持** | 主要支持 Linux | **跨平台**：Linux, Windows, macOS, RTOS |
-| **产品化程度** | 主要用于研究和原型开发 | **设计用于从研发到生产的全流程** |
-| **架构** | 单节点执行（`roscore`） | **多节点分布式执行** |
-| **安全** | 无内置安全机制 | 提供 **DDS Security** 支持 |
 
 ## ROS2 安装
 * **设置编码**
@@ -53,6 +40,9 @@ $ sudo apt install ros-foxy-desktop
 ```bash
 sudo vim ~/.bashrc 
 ##在文件最后添加以下内容，使ROS1和ROS2共存
+unset ROS_DISTRO
+unset ROS_PACKAGE_PATH
+unset ROS_VERSION
 echo "ros noetic(1) or ros2 foxy(2)?"
 read edition
 if [ "$edition" -eq "1" ];then
@@ -63,4 +53,35 @@ fi
 ```
 
 ## ROS2 构建工具——colcon
+* **创建工作空间**
+```bash
+mkdir -p ~/dev_ws/src
+cd ~/dev_ws/src
+```
+
+* **功能包**
+  ```bash
+  #创建功能包，功能包包含源代码
+  cd ~/dev_ws/src
+  ros2 pkg create --build-type ament_cmake learning_pkg_c #C++
+  ros2 pkg create --build-type ament_python learning_pkg_python #Python
+  ```
+
+  * C++功能包必然存在两个文件：`package.xml`和`CMakerLists.txt`
+  * `package.xml`文件的主要内容如下，包含功能包的版权描述，和各种依赖的声明
+  * `CMakerLists.txt`文件是编译规则
+
+* **编译**
+```bash
+cd ~/dev_ws/
+colcon build
+```
+
+* **设置环境变量**
+```bash
+source install/local_setup.sh # 仅在当前终端生效
+echo " source ~/dev_ws/install/local_setup.sh" >> ~/.bashrc # 所有终端均生效
+```
+
+## 通信方式——话题、服务、动作、参数
 
