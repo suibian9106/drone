@@ -10,6 +10,10 @@ ROS2和ROS1架构
 应用程序不需要知道其他应用程序在哪里（IP地址、端口等），它们只需要**关心自己需要什么数据（订阅）或产生什么数据（发布）**。DDS负责高效、可靠、及时地将数据从生产者传递到所有需要它的消费者。
 
 ## ROS2 安装
+
+ROS2与Ubuntu版本对应
+![版本对应](images/ROS2与Ubuntu版本对应.png)
+
 * **设置编码**
 ```bash
 $ sudo apt update && sudo apt install locales
