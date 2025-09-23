@@ -379,6 +379,7 @@ int main(int argc, char * argv[])
 ```bash
 cd ~/colcon_ws/
 colcon build
+colcon build --packages-select your_package_name
 ```
 
 ### 5.设置环境变量
