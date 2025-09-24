@@ -1,5 +1,38 @@
-## mavros
+## mavros2
+```bash
+cd ./PX4-Autopilot
+make px4_sitl_default gazebo
+```
+
+```bash
+ros2 run mavros mavros_node --ros-args --param fcu_url:="udp://:14540@127.0.0.1:14557"
+```
+
+```bash
+ros2 run drone_control_cpp simple_controller
+```
+
+
 
 ## px4_msgs 与 Micro XRCE-DDS Agent
-
+[配置教程](https://blog.csdn.net/m0_49214238/article/details/145987514)
 <img src="images/Micro-XRCE-DDS-Agent.png">
+
+启用Micro XRCE-DDS Agent
+```bash
+#先启动Agent，再给Client上电或启动Client程序
+#udp
+MicroXRCEAgent udp4 -p 8888
+
+#串口
+MicroXRCEAgent serial --dev [串口设备文件] -b [波特率]
+```
+
+```bash
+cd ./PX4-Autopilot
+make px4_sitl_default gazebo
+```
+
+```bash
+ros2 run drone_control_cpp simple_controller
+```
