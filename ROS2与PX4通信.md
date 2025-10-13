@@ -6,6 +6,7 @@ make px4_sitl_default gazebo
 
 ```bash
 ros2 run mavros mavros_node --ros-args --param fcu_url:="udp://:14540@127.0.0.1:14557"
+ros2 run mavros mavros_node --ros-args --param fcu_url:=/dev/ttyACM0:57600
 ```
 
 ```bash
