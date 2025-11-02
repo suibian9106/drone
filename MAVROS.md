@@ -1,4 +1,224 @@
-# MAVROS
+# MAVROS1
+
+## 1. 系统架构概览
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  地面站(GCS)    │◄──►│   MAVROS Bridge  │◄──►│  MAVROS 主节点  │
+│  (QGC/MP)       │    │   (gcs_bridge)   │    │  (mavros_node)  │
+└─────────────────┘    └──────────────────┘    └─────────┬───────┘
+                                                         │
+                                                 ┌───────▼───────┐
+                                                 │   插件系统    │
+                                                 │  (Plugins)    │
+                                                 └───────────────┘
+```
+
+## 2. 启动流程
+
+### 2.1 主节点启动 (mavros_node.cpp)
+```cpp
+int main(int argc, char *argv[])
+{
+    ros::init(argc, argv, "mavros");
+    mavros::MavRos mavros;  // 创建主对象
+    mavros.spin();          // 进入主循环
+    return 0;
+}
+```
+
+### 2.2 MavRos 类初始化 (mavros.cpp)
+1. **参数读取**：
+   - `fcu_url`：飞控连接地址（如：`serial:///dev/ttyACM0`）
+   - `gcs_url`：地面站连接地址（如：`udp://@`）
+   - 系统ID、组件ID、协议版本等
+
+2. **连接建立**：
+   ```cpp
+   // 连接飞控
+   fcu_link = MAVConnInterface::open_url_no_connect(fcu_url, system_id, component_id);
+   
+   // 连接地面站（如果配置）
+   if (gcs_url != "") {
+       gcs_link = MAVConnInterface::open_url_no_connect(gcs_url, system_id, component_id);
+   }
+   ```
+
+3. **插件系统初始化**：
+   - 根据黑白名单加载插件
+   - 建立消息路由表
+   ```cpp
+   //添加插件
+	for (auto &name : plugin_loader.getDeclaredClasses())
+		add_plugin(name, plugin_blacklist, plugin_whitelist);
+   ```
+
+## 3. 核心数据流
+
+### 3.1 从飞控到 ROS 的数据流
+```
+飞控(FCU) → mavconn → MavRos::plugin_route_cb() → 各插件 → mavros各种ROS话题(/mavros/*)
+                    → MavRos::mavlink_pub_cb() → ROS话题(/mavlink/from)
+```
+
+```cpp
+//消息分发给对应的插件进行处理，插件处理后再发布对应的ros话题/mavros/*
+void MavRos::plugin_route_cb(const mavlink_message_t *mmsg, const Framing framing)
+{
+	auto it = plugin_subscriptions.find(mmsg->msgid);
+	if (it == plugin_subscriptions.end())
+		return;
+
+	for (auto &info : it->second)
+		std::get<3>(info)(mmsg, framing);
+}
+//发布到ros的/mavlink/from话题，ros节点可以订阅来获取飞控的原始Mavlink消息
+void MavRos::mavlink_pub_cb(const mavlink_message_t *mmsg, Framing framing)
+{
+	auto rmsg = boost::make_shared<mavros_msgs::Mavlink>();
+
+	if  (mavlink_pub.getNumSubscribers() == 0)
+		return;
+
+	rmsg->header.stamp = ros::Time::now();
+	mavros_msgs::mavlink::convert(*mmsg, *rmsg, enum_value(framing));
+	mavlink_pub.publish(rmsg);
+}
+```
+
+### 3.2 从 ROS 到飞控的数据流
+```
+ROS节点 → mavros的ROS话题(/mavros/*) → mavros插件 → mavconn → 飞控(FCU)
+        → ROS话题(/mavlink/to) → MavRos::mavlink_sub_cb() → mavconn → 飞控(FCU)
+```
+
+```cpp
+//通过插件的mavros的ROS话题(/mavros/*)给飞控发消息
+void command_int(bool broadcast,
+		uint8_t frame, uint16_t command,
+		uint8_t current, uint8_t autocontinue,
+		float param1, float param2,
+		float param3, float param4,
+		int32_t x, int32_t y,
+		float z)
+	{
+		mavlink::common::msg::COMMAND_INT cmd {};
+		set_target(cmd, broadcast);
+
+		cmd.frame = frame;
+		cmd.command = command;
+		cmd.current = current;
+		cmd.autocontinue = autocontinue;
+		cmd.param1 = param1;
+		cmd.param2 = param2;
+		cmd.param3 = param3;
+		cmd.param4 = param4;
+		cmd.x = x;
+		cmd.y = y;
+		cmd.z = z;
+
+		UAS_FCU(m_uas)->send_message_ignore_drop(cmd);
+	}
+//通过ROS话题(/mavlink/to)给飞控发消息
+void MavRos::mavlink_sub_cb(const mavros_msgs::Mavlink::ConstPtr &rmsg)
+{
+	mavlink_message_t mmsg;
+
+	if (mavros_msgs::mavlink::convert(*rmsg, mmsg))
+		UAS_FCU(&mav_uas)->send_message_ignore_drop(&mmsg);     //UAS_FCU(&mav_uas) = fcu_link;
+	else
+		ROS_ERROR("Drop mavlink packet: convert error.");
+}
+```
+
+### 3.3 GCS 数据流
+```
+地面站 ↔ mavconn ↔ mavros主节点
+```
+```cpp
+fcu_link->connect(
+		[this](const mavlink_message_t *msg, const Framing framing) {
+			mavlink_pub_cb(msg, framing);
+			plugin_route_cb(msg, framing);
+
+			if (gcs_link) {
+				if (this->gcs_quiet_mode && msg->msgid != mavlink::minimal::msg::HEARTBEAT::MSG_ID &&
+					(ros::Time::now() - this->last_message_received_from_gcs > this->conn_timeout)) {
+					return;
+				}
+
+				gcs_link->send_message_ignore_drop(msg);    //发送给地面站
+			}
+		},
+		[]() {
+			ROS_ERROR("FCU connection closed, mavros will be terminated.");
+			ros::requestShutdown();
+		});
+
+if (gcs_link) {
+    // setup GCS link bridge
+    gcs_link->connect([this, fcu_link](const mavlink_message_t *msg, const Framing framing) {
+        this->last_message_received_from_gcs = ros::Time::now();
+        fcu_link->send_message_ignore_drop(msg);    //发送给飞控
+    });
+
+    gcs_link_diag.set_connection_status(true);
+}
+```
+
+## 4. 插件系统工作机制
+
+### 4.1 插件加载
+```cpp
+//大致代码
+void MavRos::add_plugin(std::string &pl_name, ros::V_string &blacklist, ros::V_string &whitelist)
+{
+    if (is_blacklisted(pl_name, blacklist, whitelist))
+        return;
+        
+    auto plugin = plugin_loader.createInstance(pl_name);
+    for (auto &info : plugin->get_subscriptions()) {
+			auto msgid = std::get<0>(info);
+
+			auto it = plugin_subscriptions.find(msgid);
+			if (it == plugin_subscriptions.end()) {
+				// new entry
+				plugin_subscriptions[msgid] = PluginBase::Subscriptions{{info}};
+			}
+			else {
+				// existing: check handler message type
+				it->second.emplace_back(info);
+			}
+		}
+    loaded_plugins.push_back(plugin);
+}
+```
+
+### 4.2 消息路由
+```cpp
+void MavRos::plugin_route_cb(const mavlink_message_t *mmsg, const Framing framing)
+{
+    auto it = plugin_subscriptions.find(mmsg->msgid);
+    if (it == plugin_subscriptions.end())
+        return;
+
+    // 调用所有订阅此消息ID的插件处理函数
+    for (auto &info : it->second)
+        std::get<3>(info)(mmsg, framing);
+}
+```
+
+## 5. UAS（无人系统状态）管理
+
+### 状态维护 (uas_data.cpp)
+- **连接状态**：心跳检测、连接状态回调
+- **姿态数据**：IMU数据（ENU/NED坐标系）
+- **GPS数据**：定位信息、卫星状态
+- **能力标志**：飞控功能支持情况
+- **坐标变换**：提供FRD↔FLU、NED↔ENU等坐标系转换
+
+
+# MAVROS2
 ros2 mavros 启动后节点
 <img src="images/ros2_mavros_nodes.png" alt="ros2 mavros节点">
 
